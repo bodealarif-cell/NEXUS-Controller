@@ -1,0 +1,60 @@
+name: Windows
+
+on:
+  push:
+    paths: ["windows-receiver/**", "shared-protocol/dotnet/**", "tests/dotnet/**", ".github/workflows/windows.yml"]
+  pull_request:
+    paths: ["windows-receiver/**", "shared-protocol/dotnet/**", "tests/dotnet/**", ".github/workflows/windows.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Validate expected project paths
+        shell: bash
+        run: |
+          for f in windows-receiver/NexusReceiver/NexusReceiver.csproj shared-protocol/dotnet/Nexus.Protocol/Nexus.Protocol.csproj tests/dotnet/Nexus.Tests/Nexus.Tests.csproj; do
+            test -f "$f" || { echo "::error::Missing required file: $f"; exit 1; }
+          done
+
+      - uses: actions/setup-dotnet@v4.1.0
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Diagnostics
+        run: dotnet --info
+
+      - name: Restore
+        run: |
+          dotnet restore tests/dotnet/Nexus.Tests
+          dotnet restore windows-receiver/NexusReceiver
+
+      - name: Run protocol / session / receiver-core tests
+        run: dotnet run --no-restore -c Release --project tests/dotnet/Nexus.Tests
+
+      - name: Build receiver
+        run: dotnet build windows-receiver/NexusReceiver -c Release --no-restore
+
+      - name: Publish (win-x64, framework-dependent)
+        run: dotnet publish windows-receiver/NexusReceiver -c Release -r win-x64 --self-contained false -o publish
+
+      - name: Verify output and package
+        shell: pwsh
+        run: |
+          if (-not (Test-Path publish/NexusReceiver.exe)) { Write-Error "publish/NexusReceiver.exe not found"; Get-ChildItem publish; exit 1 }
+          Compress-Archive -Path publish/* -DestinationPath NexusReceiver-win-x64.zip
+          Get-Item NexusReceiver-win-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: nexus-receiver-win-x64
+          path: NexusReceiver-win-x64.zip
+          if-no-files-found: error
