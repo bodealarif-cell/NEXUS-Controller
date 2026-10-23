@@ -1,0 +1,64 @@
+name: Android
+
+on:
+  push:
+    paths: ["android-controller/**", "shared-protocol/kotlin/**", ".github/workflows/android.yml"]
+  pull_request:
+    paths: ["android-controller/**", "shared-protocol/kotlin/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Validate expected project paths
+        run: |
+          for f in android-controller/settings.gradle.kts android-controller/app/build.gradle.kts \
+                   android-controller/app/src/main/AndroidManifest.xml shared-protocol/kotlin/build.gradle.kts; do
+            test -f "$f" || { echo "::error::Missing required file: $f (is the repository fully checked out?)"; exit 1; }
+          done
+
+      - uses: actions/setup-java@v4.5.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK components
+        uses: android-actions/setup-android@v3.2.1
+        with:
+          packages: "platform-tools platforms;android-34 build-tools;34.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4.2.1
+        with:
+          gradle-version: "8.9"
+
+      - name: Diagnostics
+        run: |
+          java -version
+          gradle --version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+      - name: Shared protocol + core tests (JVM)
+        run: gradle -p shared-protocol/kotlin nexusTests --stacktrace
+
+      - name: Build debug APK
+        run: gradle -p android-controller :app:assembleDebug --stacktrace
+
+      - name: Verify APK exists
+        run: |
+          APK=android-controller/app/build/outputs/apk/debug/app-debug.apk
+          test -f "$APK" || { echo "::error::APK not produced at $APK"; find android-controller -name '*.apk'; exit 1; }
+          ls -l "$APK"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: nexus-controller-debug-apk
+          path: android-controller/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
